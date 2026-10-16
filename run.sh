@@ -10,5 +10,5 @@ PORT="${PORT:?vibe sets PORT; run this through vibe, not by hand}"
 
 echo "space starting on port $PORT"
 
-# Replace this with the real server. It must stay in the foreground.
-exec python3 -m http.server "$PORT" --bind 0.0.0.0
+
+exec python3 "$(dirname "$0")/server.py"

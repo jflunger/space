@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Space</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="top">
+    <div class="crumbs" id="crumbs">
+      <h1><button data-id="">Space</button></h1>
+    </div>
+    <div class="status" id="status"></div>
+  </header>
+
+  <main class="canvas" id="canvas">
+    <div class="world" id="world"></div>
+    <div class="empty" id="empty">
+      <div class="empty-title">A clear space</div>
+      <div class="empty-sub">Double-click anywhere to drop a box</div>
+    </div>
+    <div class="toolbar">
+      <button class="tb-btn primary" id="newBox" title="New box (N)">
+        <svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>
+        <span>New box</span>
+      </button>
+      <span class="tb-sep" id="zoomSep" hidden></span>
+      <button class="tb-btn" id="zoomOut" title="Back (Esc)" hidden>
+        <svg viewBox="0 0 16 16"><path d="M6 3v3H3M10 3v3h3M6 13v-3H3M10 13v-3h3"/></svg>
+        <span>Back</span>
+      </button>
+    </div>
+  </main>
+
+<script src="app.js"></script>
+</body>
+</html>
