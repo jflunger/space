@@ -14,8 +14,6 @@
   const TITLE_W = 56, TITLE_H = 26;
   const COLORS = 6;
   const SPACE = { w: 1600, h: 1000 };   // the finite top-level space
-  const PAD = 28;           // screen margin around the fitted space
-  const BOTTOM = 76;        // room kept free for the toolbar
   const OPEN_MS = 420;
 
   const ICON = {
@@ -30,7 +28,7 @@
   let focus = null;           // id of the box we've opened, null = top level
   let selected = null;
   let drag = null;
-  let k = 1;                  // screen pixels per unit of the current level's space
+  let kx = 1, ky = 1;         // screen pixels per unit of the current level's space
   let anim = null;            // running open/close transition
   const undoStack = [];
 
@@ -78,7 +76,7 @@
   function scaleOf(pid) {
     const inner = innerOf(pid);
     const r = containerOf(pid)?.getBoundingClientRect();
-    if (!r || !r.width || !r.height) return { sx: k, sy: k };
+    if (!r || !r.width || !r.height) return { sx: kx, sy: ky };
     return { sx: r.width / inner.w, sy: r.height / inner.h };
   }
 
@@ -205,20 +203,21 @@
     layoutBox(el, c, r.w, r.h);
   }
 
-  // Where a level's space sits on screen: as large as fits, centered.
+  // Where a level's space sits on screen: filling the canvas, stretched to it like
+  // a box's body is. An opened box keeps room for its rim.
   function fitRect(id = focus) {
     const { w, h } = innerOf(id);
-    const cw = canvas.clientWidth, ch = canvas.clientHeight;
-    const aw = cw - PAD * 2, ah = ch - PAD - BOTTOM;
-    const s = Math.max(0.01, Math.min(aw / w, ah / h));
-    return { x: (cw - w * s) / 2, y: PAD + (ah - h * s) / 2, w: w * s, h: h * s, k: s };
+    const m = id ? INSET : 0;
+    const fw = Math.max(1, canvas.clientWidth - m * 2), fh = Math.max(1, canvas.clientHeight - m * 2);
+    return { x: m, y: m, w: fw, h: fh, sx: fw / w, sy: fh / h };
   }
 
   function layoutLevel() {
     const f = fitRect();
-    k = f.k;
+    kx = f.sx;
+    ky = f.sy;
     setRect(world, f);
-    for (const el of world.querySelectorAll(":scope > .box")) layoutChild(el, k, k);
+    for (const el of world.querySelectorAll(":scope > .box")) layoutChild(el, kx, ky);
   }
 
   function render() {
@@ -429,21 +428,24 @@
   // A point on screen, in units of the current level's space.
   function toUnits(clientX, clientY) {
     const r = world.getBoundingClientRect();
-    return { x: (clientX - r.left) / k, y: (clientY - r.top) / k };
+    return { x: (clientX - r.left) / kx, y: (clientY - r.top) / ky };
   }
 
-  // What would receive a drop at this point: a box, the current level, a breadcrumb, or nothing.
+  // What would receive a drop at this point: a box, a breadcrumb, or the current level.
   // Breadcrumbs are hit by the pointer; boxes by the dragged box's center.
-  function dropTargetAt(d, px, py) {
+  // `r` is where the pointer alone would put the box (world coordinates), so the
+  // target follows the pointer even while the shown box is held inside a parent.
+  function dropTargetAt(r, px, py) {
     const atPointer = document.elementFromPoint(px, py);
     const crumb = atPointer?.closest("#crumbs button[data-id]");
     if (crumb) return { el: crumb, id: crumb.dataset.id || null, crumb: true };
-    const r = d.el.getBoundingClientRect();
-    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    const w = world.getBoundingClientRect();
+    const hit = document.elementFromPoint(w.left + r.x + r.w / 2, w.top + r.y + r.h / 2);
     const box = hit && canvas.contains(hit) && !hit.closest(".toolbar") && hit.closest(".box.lod-full");
     if (box) return { el: box, id: box.dataset.id };
-    const inCanvas = (el) => el && canvas.contains(el);
-    return inCanvas(hit) || inCanvas(atPointer) ? { el: null, id: focus } : null;
+    // Anywhere else (the bare level, the toolbar, past the canvas edge, out of the
+    // window) holds the box in the current level.
+    return { el: null, id: focus };
   }
 
   function highlight(d, target) {
@@ -453,16 +455,18 @@
     d.target = target;
   }
 
+  // The rect (world coordinates) a box at `r` ends up with once dropped into `pid`,
+  // matching what fitInside does to it.
+  function confineTo(r, pid) {
+    const c = worldRect(containerOf(pid).getBoundingClientRect());
+    const w = Math.min(r.w, c.w), h = Math.min(r.h, c.h);
+    return { x: clamp(r.x, c.x, c.x + c.w - w), y: clamp(r.y, c.y, c.y + c.h - h), w, h };
+  }
+
   // Drops keep the box's on-screen position and size, re-expressed in the new parent's units.
   function drop(d) {
     const { b, target } = d;
     d.target?.el?.classList.remove("drop-target");
-    if (!target) {
-      // Dropped outside the canvas: put it back.
-      undoStack.pop();
-      render();
-      return;
-    }
     if (target.crumb && target.id !== focus) {
       const from = innerOf(b.parent);
       b.parent = target.id;
@@ -510,7 +514,14 @@
     el.style.zIndex = b.z;
 
     const base = { b, el, sx: e.clientX, sy: e.clientY, scale: scaleOf(b.parent) };
-    if (t.closest(".resize")) drag = { ...base, mode: "resize", ow: b.w, oh: b.h };
+    if (t.closest(".resize")) {
+      // Everything inside scales with the box, so remember where it all started.
+      const inside = descendants(b.id).map((id) => {
+        const c = state.boxes[id];
+        return { c, x: c.x, y: c.y, w: c.w, h: c.h };
+      });
+      drag = { ...base, mode: "resize", ow: b.w, oh: b.h, inside };
+    }
     else if (t.closest(".head") || !el.classList.contains("lod-full"))
       drag = { ...base, mode: "move", onTitle: !!t.closest(".title") };
     else drag = { ...base, mode: "click" };
@@ -534,14 +545,27 @@
     }
     const { b } = drag;
     if (drag.mode === "move") {
-      drag.el.style.left = drag.from.x + rdx + "px";
-      drag.el.style.top = drag.from.y + rdy + "px";
-      highlight(drag, dropTargetAt(drag, e.clientX, e.clientY));
+      const raw = { ...drag.from, x: drag.from.x + rdx, y: drag.from.y + rdy };
+      const target = dropTargetAt(raw, e.clientX, e.clientY);
+      highlight(drag, target);
+      // Show the box where it will land: held inside the parent it would drop into.
+      const r = target && !target.crumb ? confineTo(raw, target.id) : raw;
+      setRect(drag.el, r);
+      layoutBox(drag.el, b, r.w, r.h);
     } else if (drag.mode === "resize") {
       const { sx, sy } = drag.scale;
       const inner = innerOf(b.parent);
       b.w = Math.round(clamp(drag.ow + rdx / sx, MIN_PX / sx, inner.w - b.x));
       b.h = Math.round(clamp(drag.oh + rdy / sy, MIN_PX / sy, inner.h - b.y));
+      // Each box's space is as many units as the box is big, so every level below
+      // stretches by the same factor to stay put relative to its parent.
+      const fx = b.w / drag.ow, fy = b.h / drag.oh;
+      for (const o of drag.inside) {
+        o.c.x = o.x * fx;
+        o.c.y = o.y * fy;
+        o.c.w = o.w * fx;
+        o.c.h = o.h * fy;
+      }
       layoutChild(drag.el, sx, sy);
     }
   });
@@ -596,8 +620,8 @@
 
   function newBoxInView() {
     const inner = innerOf(focus);
-    const jitter = () => (Math.random() - 0.5) * 60 / k;
-    createBox(focus, inner.w / 2 + jitter(), inner.h / 2 - NEW_H / 2 / k + jitter(), true);
+    const jitter = (k) => (Math.random() - 0.5) * 60 / k;
+    createBox(focus, inner.w / 2 + jitter(kx), inner.h / 2 - NEW_H / 2 / ky + jitter(ky), true);
   }
   $("#newBox").onclick = newBoxInView;
 
@@ -627,34 +651,30 @@
 
   // ---------- persistence ----------
 
+  const STORE_KEY = "space-state";
   const status = $("#status");
   let saveTimer = null;
 
   function save() {
     status.textContent = "Saving…";
-    try { localStorage.setItem("space-backup", JSON.stringify(state)); } catch {}
     clearTimeout(saveTimer);
-    saveTimer = setTimeout(flush, 400);
+    saveTimer = setTimeout(flush, 200);
   }
 
-  async function flush() {
+  function flush() {
+    clearTimeout(saveTimer);
     saveTimer = null;
     try {
-      const res = await fetch("/api/state", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(state),
-      });
-      if (!res.ok) throw new Error(res.status);
-      status.textContent = "Saved";
+      localStorage.setItem(STORE_KEY, JSON.stringify(state));
+      status.textContent = "Saved in this browser";
     } catch {
-      status.textContent = "Offline — kept in this browser";
+      status.textContent = "Couldn't save — browser storage unavailable";
     }
   }
 
   window.addEventListener("beforeunload", () => {
     if (document.activeElement?.isContentEditable) document.activeElement.blur();
-    if (saveTimer) navigator.sendBeacon("/api/state", new Blob([JSON.stringify(state)], { type: "application/json" }));
+    if (saveTimer) flush();
   });
 
   function seed() {
@@ -670,14 +690,13 @@
     return s;
   }
 
-  async function load() {
+  function load() {
     try {
-      const res = await fetch("/api/state");
-      if (res.ok) state = await res.json();
-      else if (res.status === 404) state = seed();
-      else throw new Error(res.status);
+      // "space-backup" is the old server-era backup key; adopt it once if present.
+      const raw = localStorage.getItem(STORE_KEY) ?? localStorage.getItem("space-backup");
+      state = (raw && JSON.parse(raw)) || seed();
     } catch {
-      try { state = JSON.parse(localStorage.getItem("space-backup")) || seed(); } catch { state = seed(); }
+      state = seed();
     }
     state.boxes ||= {};
     state.seq ||= 0;
