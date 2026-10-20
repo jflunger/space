@@ -28,13 +28,33 @@
         <svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>
         <span>New box</span>
       </button>
-      <span class="tb-sep" id="zoomSep" hidden></span>
-      <button class="tb-btn" id="zoomOut" title="Back (Esc)" hidden>
-        <svg viewBox="0 0 16 16"><path d="M6 3v3H3M10 3v3h3M6 13v-3H3M10 13v-3h3"/></svg>
-        <span>Back</span>
+      <span class="tb-sep" id="textSep" hidden></span>
+      <button class="tb-btn" id="textBtn" title="This box's text (T)" hidden>
+        <svg viewBox="0 0 16 16"><path d="M3 4h10M3 7h10M3 10h7M3 13h5"/></svg>
+        <span>Text</span>
       </button>
     </div>
+    <aside class="notes" id="notes" hidden>
+      <div class="notes-head">
+        <span class="notes-title">Text</span>
+        <span class="notes-sub" id="notesSub"></span>
+        <button class="notes-close" id="notesClose" title="Close (T)">
+          <svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+        </button>
+      </div>
+      <textarea id="notesText" placeholder="Write something…"></textarea>
+    </aside>
   </main>
+
+  <div class="menu" id="menu" role="menu" hidden></div>
+
+  <div class="modal" id="colorModal" hidden>
+    <div class="sheet" role="dialog" aria-label="Edit color">
+      <div class="sheet-title">Color</div>
+      <div class="sheet-sub" id="colorName"></div>
+      <div class="swatches" id="swatches"></div>
+    </div>
+  </div>
 
 <script src="app.js"></script>
 </body>

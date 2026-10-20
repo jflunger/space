@@ -12,6 +12,7 @@
   // Level of detail by on-screen size: full box, title only, or a bare tile.
   const FULL_W = 120, FULL_H = 92;
   const TITLE_W = 56, TITLE_H = 26;
+  const BARE_W = 40, BARE_H = 32;   // a box without a title bar shows its body down to this
   const COLORS = 6;
   const SPACE = { w: 1600, h: 1000 };   // the finite top-level space
   const OPEN_MS = 420;
@@ -20,9 +21,15 @@
     check: '<svg viewBox="0 0 16 16"><path d="M3.5 8.5l3 3 6-7"/></svg>',
     add: '<svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>',
     open: '<svg viewBox="0 0 16 16"><path d="M6 3H3v10h10v-3M9 3h4v4M13 3L7.5 8.5"/></svg>',
-    del: '<svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
+    del: '<svg viewBox="0 0 16 16"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5"/></svg>',
+    menu: '<svg viewBox="0 0 16 16" class="dots"><circle cx="3.5" cy="8" r="1.35"/><circle cx="8" cy="8" r="1.35"/><circle cx="12.5" cy="8" r="1.35"/></svg>',
+    color: '<svg viewBox="0 0 16 16"><path d="M8 2.5c2.5 3 4 5 4 7a4 4 0 0 1-8 0c0-2 1.5-4 4-7z"/></svg>',
     grip: '<svg viewBox="0 0 10 10"><path d="M9 3L3 9M9 7L7 9"/></svg>',
   };
+  // Corners resize both ways; sides only along their own axis.
+  const RESIZE_HANDLES = ["n", "s", "e", "w", "nw", "ne", "sw", "se"]
+    .map((d) => `<div class="resize ${d}" data-dir="${d}" title="Resize">${d === "se" ? ICON.grip : ""}</div>`)
+    .join("");
 
   let state = { boxes: {}, seq: 0 };
   let focus = null;           // id of the box we've opened, null = top level
@@ -39,6 +46,10 @@
     Object.values(state.boxes).filter((b) => b.parent === pid).sort((a, b) => (a.z || 0) - (b.z || 0));
   const maxZ = () => Object.values(state.boxes).reduce((m, b) => Math.max(m, b.z || 0), 0);
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  // Display options; boxes saved before they existed keep the old look.
+  const isActionable = (b) => b.actionable !== false;
+  const hasTitle = (b) => b.showTitle !== false;
+  const headOf = (b) => (hasTitle(b) ? HEAD : INSET);   // space above a box's body
 
   function snapshot() {
     undoStack.push(JSON.stringify(state));
@@ -94,6 +105,9 @@
       w,
       h,
       title: "",
+      text: "",
+      showTitle: false,
+      showText: true,
       done: false,
       color: p ? (p.color + 1) % COLORS : state.seq++ % COLORS,
       z: maxZ() + 1,
@@ -153,46 +167,123 @@
 
   function buildBox(b) {
     const el = document.createElement("div");
-    el.className = `box c${b.color}${b.done ? " done" : ""}${b.id === selected ? " selected" : ""}`;
+    const titled = hasTitle(b), asText = !!b.showText;
+    el.className = `box c${b.color}${isActionable(b) && b.done ? " done" : ""}${titled ? "" : " no-title"}` +
+      `${asText ? " show-text" : ""}${b.id === selected ? " selected" : ""}`;
     el.dataset.id = b.id;
     el.style.zIndex = b.z || 0;
 
     const children = kids(b.id);
-    const done = children.filter((c) => c.done).length;
-    const count = children.length
-      ? `<span class="count${done === children.length ? " all" : ""}">${done}/${children.length}</span>`
+    const tasks = children.filter(isActionable);
+    const done = tasks.filter((c) => c.done).length;
+    const count = tasks.length
+      ? `<span class="count${done === tasks.length ? " all" : ""}">${done}/${tasks.length}</span>`
       : "";
+    const menu = `<button class="menu-btn" data-act="menu" title="Options">${ICON.menu}</button>`;
+    const check = isActionable(b) ? `<button class="check" data-act="check" title="Mark done">${ICON.check}</button>` : "";
 
     el.innerHTML = `
-      <div class="head">
-        <button class="check" data-act="check" title="Mark done">${ICON.check}</button>
-        <div class="title" spellcheck="false"></div>
-        ${count}
-        <div class="actions">
-          <button data-act="add" title="Add a box inside">${ICON.add}</button>
-          <button data-act="open" title="Open this box">${ICON.open}</button>
-          <button data-act="del" title="Delete">${ICON.del}</button>
-        </div>
-      </div>
-      <div class="body">${children.length ? "" : '<div class="hint">Click to open</div>'}</div>
-      <div class="resize" title="Resize">${ICON.grip}</div>`;
-    el.querySelector(":scope > .head > .title").textContent = b.title;
+      ${titled ? `<div class="head">${check}<div class="title" spellcheck="false"></div>${count}${menu}</div>` : menu}
+      <div class="body${asText ? " note" : ""}">${asText || children.length ? "" : '<div class="hint">Click to open</div>'}</div>
+      ${RESIZE_HANDLES}`;
+    if (titled) el.querySelector(":scope > .head > .title").textContent = b.title;
     const body = el.querySelector(":scope > .body");
-    for (const c of children) body.appendChild(buildBox(c));
+    if (asText) {
+      const t = Object.assign(document.createElement("div"), { className: "note-text" });
+      setNoteText(t, b.text || "");
+      body.append(t, Object.assign(document.createElement("div"), { className: "note-bar", innerHTML: "<span></span>" }));
+    }
+    else for (const c of children) body.appendChild(buildBox(c));
     return el;
   }
 
+  // A box's text is sized by its line count alone: its lines always fill the
+  // body's height exactly, and run off the right edge rather than wrap.
+  const NOTE_PAD = 6, NOTE_LH = 1.25;
+
+  // A trailing newline only shows as an empty last line when another follows it,
+  // so the page holds one extra newline at the end, the way an editor keeps it.
+  function setNoteText(t, text) {
+    t.textContent = text.endsWith("\n") ? text + "\n" : text;
+  }
+
+  // The text as written. While editing, the browser may keep line breaks as <br>s
+  // or blocks rather than "\n"s, and textContent drops those, so walk the nodes.
+  // The one break that ends the page is the one that never shows; drop it.
+  const BLOCK = /^(DIV|P|LI|PRE|BLOCKQUOTE|H[1-6])$/;
+  function noteText(t) {
+    let s = "";
+    const walk = (n) => {
+      for (const c of n.childNodes) {
+        if (c.nodeType === Node.TEXT_NODE) s += c.data;
+        else if (c.nodeName === "BR") s += "\n";
+        else if (c.nodeType === Node.ELEMENT_NODE) {
+          const block = BLOCK.test(c.nodeName);
+          if (block && s && !s.endsWith("\n")) s += "\n";
+          walk(c);
+          if (block && !s.endsWith("\n")) s += "\n";
+        }
+      }
+    };
+    walk(t);
+    return s.replace(/\r\n?/g, "\n").replace(/\n$/, "");
+  }
+
+  // How many lines the text shows. Outside editing the page is exactly what
+  // setNoteText wrote, so the text says it. While editing the browser owns the
+  // page, so measure: lay it out at a known line height and count the lines.
+  const textLines = (text) => text.split("\n").length;
+  function noteLines(t) {
+    const text = noteText(t);
+    if (!t.isContentEditable) return text ? textLines(text) : 3;   // empty: room for its placeholder
+    const st = t.style, was = [st.lineHeight, st.fontSize, st.bottom, st.height];
+    Object.assign(st, { lineHeight: "40px", fontSize: "10px", bottom: "auto", height: "auto" });
+    const h = t.offsetHeight - NOTE_PAD * 2;
+    [st.lineHeight, st.fontSize, st.bottom, st.height] = was;
+    return h > 0 ? Math.max(1, Math.round(h / 40)) : textLines(text);
+  }
+
+  function fitNote(t) {
+    if (!t) return;
+    const bodyH = t.parentElement.getBoundingClientRect().height;
+    const lineH = Math.max(1, bodyH - NOTE_PAD * 2) / noteLines(t);
+    t.style.lineHeight = lineH + "px";
+    t.style.fontSize = lineH / NOTE_LH + "px";
+    updateNoteBar(t);
+  }
+
+  // Lines that run off the right are scrolled with an overlay bar, drawn over
+  // the text's bottom edge so it never takes height from the lines.
+  function updateNoteBar(t) {
+    const bar = t.nextElementSibling;
+    if (!bar?.classList.contains("note-bar")) return;
+    const over = t.scrollWidth - t.clientWidth;
+    bar.classList.toggle("on", t.isContentEditable && over > 1);
+    if (over <= 1) return;
+    const track = bar.clientWidth, thumb = Math.max(24, (track * t.clientWidth) / t.scrollWidth);
+    bar.firstElementChild.style.width = thumb + "px";
+    bar.firstElementChild.style.transform = `translateX(${(t.scrollLeft / over) * (track - thumb)}px)`;
+  }
+
+  canvas.addEventListener("scroll", (e) => {
+    if (e.target.classList?.contains("note-text")) updateNoteBar(e.target);
+  }, true);
+
   // Size a box's insides for its on-screen size `w × h`: pick its level of detail,
   // then map its space onto its body and lay out its children there.
+
   function layoutBox(el, b, w, h) {
-    const lod = w >= FULL_W && h >= FULL_H ? "full" : w >= TITLE_W && h >= TITLE_H ? "title" : "bare";
+    const lod = !hasTitle(b)
+      ? (w >= BARE_W && h >= BARE_H ? "full" : "bare")
+      : w >= FULL_W && h >= FULL_H ? "full" : w >= TITLE_W && h >= TITLE_H ? "title" : "bare";
     if (el.dataset.lod !== lod) {
       el.classList.remove("lod-full", "lod-title", "lod-bare");
       el.classList.add("lod-" + lod);
       el.dataset.lod = lod;
     }
     if (lod !== "full") return;
-    const sx = (w - INSET * 2) / b.w, sy = (h - HEAD - INSET) / b.h;
+    if (b.showText) return fitNote(el.querySelector(":scope > .body > .note-text"));
+    const sx = (w - INSET * 2) / b.w, sy = (h - headOf(b) - INSET) / b.h;
     for (const c of el.querySelectorAll(":scope > .body > .box")) layoutChild(c, sx, sy);
   }
 
@@ -230,8 +321,10 @@
     $("#empty .empty-sub").textContent = focus
       ? "Double-click anywhere to add a box inside"
       : "Double-click anywhere to drop a box";
-    $("#zoomOut").hidden = $("#zoomSep").hidden = !focus;
+    $("#textSep").hidden = $("#textBtn").hidden = !focus;
     renderCrumbs();
+    renderNotes();
+    if (menuFor) renderMenu();
   }
 
   function renderCrumbs() {
@@ -250,6 +343,7 @@
       crumbs.append(sep, btn);
     }
     document.title = path.length ? `${path.at(-1).title || "Untitled"} · Space` : "Space";
+    if (focus) $("#notesSub").textContent = state.boxes[focus].title || "Untitled";
   }
 
   function select(id) {
@@ -275,7 +369,8 @@
   function openedRect(id) {
     const f = fitRect(id), c = canvas.getBoundingClientRect(), w = world.getBoundingClientRect();
     const dx = c.left + canvas.clientLeft - w.left, dy = c.top + canvas.clientTop - w.top;
-    return { x: f.x + dx - INSET, y: f.y + dy - HEAD, w: f.w + INSET * 2, h: f.h + HEAD + INSET };
+    const head = headOf(state.boxes[id]);
+    return { x: f.x + dx - INSET, y: f.y + dy - head, w: f.w + INSET * 2, h: f.h + head + INSET };
   }
 
   // Pull a box out of its parent into the world layer so it can grow unclipped.
@@ -343,8 +438,11 @@
     const next = id && state.boxes[id] ? id : null;
     const prev = focus;
     stopAnim();
+    closeMenu();
     selected = null;
     document.activeElement?.blur?.();
+    // A box shown as text is mostly its text, so open straight onto it.
+    if (next && next !== prev && state.boxes[next].showText) notesOpen = true;
 
     const el = next && next !== prev && isInside(next, prev) && boxEl(next);
     if (el && el.offsetWidth) {
@@ -386,6 +484,7 @@
   // ---------- title editing ----------
 
   function startEdit(id) {
+    if (!hasTitle(state.boxes[id])) return state.boxes[id].showText && startNoteEdit(id);
     const t = boxEl(id)?.querySelector(":scope > .head > .title");
     if (!t || !t.offsetWidth) return;
     t.contentEditable = "true";
@@ -398,8 +497,80 @@
     s.addRange(r);
   }
 
+  // ---------- text editing in place ----------
+
+  // A box shown as text is edited right where it sits, caret at the click (or the end).
+  function startNoteEdit(id, x, y) {
+    const t = boxEl(id)?.querySelector(":scope > .body > .note-text");
+    if (!t || !t.offsetWidth) return;
+    try { t.contentEditable = "plaintext-only"; } catch {}
+    if (t.contentEditable !== "plaintext-only") t.contentEditable = "true";
+    t.focus();
+    if (x == null) {
+      const r = document.createRange();
+      r.selectNodeContents(t);
+      r.collapse(false);
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+      return;
+    }
+    const at = document.caretPositionFromPoint?.(x, y);
+    const r = at ? document.createRange() : document.caretRangeFromPoint?.(x, y);
+    if (at) r.setStart(at.offsetNode, at.offset);
+    if (!r || !t.contains(r.startContainer)) return;
+    r.collapse(true);
+    const s = getSelection();
+    s.removeAllRanges();
+    s.addRange(r);
+  }
+
+  canvas.addEventListener("input", (e) => {
+    const t = e.target;
+    if (t.classList?.contains("note-text")) fitNote(t);
+  });
+  canvas.addEventListener("keyup", (e) => {
+    if (e.target.classList?.contains("note-text")) updateNoteBar(e.target);
+  });
+
+  // Dragging the bar's thumb scrolls the text; pressing the track jumps there.
+  // Neither takes focus, so the text stays in editing.
+  canvas.addEventListener("pointerdown", (e) => {
+    const bar = e.target.closest(".note-bar.on");
+    if (!bar) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    const t = bar.previousElementSibling, thumb = bar.firstElementChild;
+    const track = bar.getBoundingClientRect(), tw = thumb.offsetWidth;
+    const over = t.scrollWidth - t.clientWidth;
+    const k = over / Math.max(1, track.width - tw);
+    if (e.target !== thumb) t.scrollLeft = (e.clientX - track.left - tw / 2) * k;
+    const x0 = e.clientX, s0 = t.scrollLeft;
+    const move = (ev) => (t.scrollLeft = s0 + (ev.clientX - x0) * k);
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }, true);
+
+  function endNoteEdit(t) {
+    t.contentEditable = "false";
+    t.scrollLeft = 0;
+    const b = state.boxes[t.closest(".box").dataset.id];
+    const text = noteText(t).trim() ? noteText(t) : "";
+    setNoteText(t, text);
+    if (b && (b.text || "") !== text) {
+      snapshot();
+      b.text = text;
+      save();
+    }
+    fitNote(t);
+  }
+
   canvas.addEventListener("focusout", (e) => {
     const t = e.target;
+    if (t.classList?.contains("note-text")) return endNoteEdit(t);
     if (!t.classList?.contains("title")) return;
     t.contentEditable = "false";
     t.scrollLeft = 0;
@@ -415,6 +586,11 @@
   });
 
   canvas.addEventListener("keydown", (e) => {
+    if (e.target.classList?.contains("note-text") && e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      return e.target.blur();
+    }
     if (!e.target.classList?.contains("title")) return;
     if (e.key === "Enter" || e.key === "Escape") {
       e.preventDefault();
@@ -441,7 +617,8 @@
     if (crumb) return { el: crumb, id: crumb.dataset.id || null, crumb: true };
     const w = world.getBoundingClientRect();
     const hit = document.elementFromPoint(w.left + r.x + r.w / 2, w.top + r.y + r.h / 2);
-    const box = hit && canvas.contains(hit) && !hit.closest(".toolbar") && hit.closest(".box.lod-full");
+    // A box shown as text doesn't show its children, so nothing can be dropped into it.
+    const box = hit && canvas.contains(hit) && !hit.closest(".toolbar, .notes") && hit.closest(".box.lod-full:not(.show-text)");
     if (box) return { el: box, id: box.dataset.id };
     // Anywhere else (the bare level, the toolbar, past the canvas edge, out of the
     // window) holds the box in the current level.
@@ -498,7 +675,7 @@
   canvas.addEventListener("pointerdown", (e) => {
     if (e.button !== 0 || anim) return;
     const t = e.target;
-    if (t.isContentEditable || t.closest(".toolbar")) return;
+    if (t.isContentEditable || t.closest(".toolbar, .notes")) return;
     const el = t.closest(".box");
 
     if (!el) {
@@ -513,16 +690,19 @@
     b.z = maxZ() + 1;
     el.style.zIndex = b.z;
 
-    const base = { b, el, sx: e.clientX, sy: e.clientY, scale: scaleOf(b.parent) };
-    if (t.closest(".resize")) {
+    const onNote = el.classList.contains("lod-full") && !!t.closest(".note-text");
+    const base = { b, el, sx: e.clientX, sy: e.clientY, scale: scaleOf(b.parent), onNote };
+    const handle = t.closest(".resize");
+    if (handle) {
       // Everything inside scales with the box, so remember where it all started.
       const inside = descendants(b.id).map((id) => {
         const c = state.boxes[id];
         return { c, x: c.x, y: c.y, w: c.w, h: c.h };
       });
-      drag = { ...base, mode: "resize", ow: b.w, oh: b.h, inside };
+      const dir = handle.dataset.dir;
+      drag = { ...base, mode: "resize", dir, ox: b.x, oy: b.y, ow: b.w, oh: b.h, inside };
     }
-    else if (t.closest(".head") || !el.classList.contains("lod-full"))
+    else if (t.closest(".head") || !el.classList.contains("lod-full") || !hasTitle(b))
       drag = { ...base, mode: "move", onTitle: !!t.closest(".title") };
     else drag = { ...base, mode: "click" };
     e.preventDefault();
@@ -555,8 +735,19 @@
     } else if (drag.mode === "resize") {
       const { sx, sy } = drag.scale;
       const inner = innerOf(b.parent);
-      b.w = Math.round(clamp(drag.ow + rdx / sx, MIN_PX / sx, inner.w - b.x));
-      b.h = Math.round(clamp(drag.oh + rdy / sy, MIN_PX / sy, inner.h - b.y));
+      const { dir, ox, oy, ow, oh } = drag;
+      const minW = MIN_PX / sx, minH = MIN_PX / sy;
+      // Corners move two edges, sides just the one; the opposite edge stays put.
+      if (dir.includes("e")) b.w = Math.round(clamp(ow + rdx / sx, minW, inner.w - ox));
+      if (dir.includes("w")) {
+        b.x = Math.round(clamp(ox + rdx / sx, 0, ox + ow - minW));
+        b.w = ox + ow - b.x;
+      }
+      if (dir.includes("s")) b.h = Math.round(clamp(oh + rdy / sy, minH, inner.h - oy));
+      if (dir.includes("n")) {
+        b.y = Math.round(clamp(oy + rdy / sy, 0, oy + oh - minH));
+        b.h = oy + oh - b.y;
+      }
       // Each box's space is as many units as the box is big, so every level below
       // stretches by the same factor to stay put relative to its parent.
       const fx = b.w / drag.ow, fy = b.h / drag.oh;
@@ -577,6 +768,10 @@
     if (d.mode === "bg") {
       if (!d.moved) select(null);
       return;
+    }
+    if (!d.moved && d.onNote) {
+      d.el.classList.remove("lifting");
+      return startNoteEdit(d.b.id, d.sx, d.sy);
     }
     if (d.mode === "click") {
       if (!d.moved) enter(d.b.id);
@@ -600,9 +795,22 @@
     const id = btn.closest(".box").dataset.id;
     const act = btn.dataset.act;
     if (act === "check") toggleDone(id);
-    else if (act === "add") addChild(id);
-    else if (act === "open") enter(id);
-    else if (act === "del") remove(id);
+    else if (act === "menu") {
+      // A second click on the button that opened the menu just closes it.
+      if (menuClosed.id === id && performance.now() - menuClosed.at < 300) return;
+      select(id);
+      const r = btn.getBoundingClientRect();
+      openMenu(id, r.right, r.bottom + 6, true);
+    }
+  });
+
+  canvas.addEventListener("contextmenu", (e) => {
+    const el = e.target.closest(".box");
+    if (!el || anim || e.target.isContentEditable) return;
+    e.preventDefault();
+    document.activeElement?.blur?.();
+    select(el.dataset.id);
+    openMenu(el.dataset.id, e.clientX, e.clientY);
   });
 
   canvas.addEventListener("dblclick", (e) => {
@@ -613,10 +821,41 @@
     }
   });
 
-  canvas.addEventListener("wheel", (e) => e.preventDefault(), { passive: false });
+  canvas.addEventListener("wheel", (e) => {
+    if (e.target.closest(".notes")) return;
+    e.preventDefault();
+    // An edited text scrolls sideways with either wheel direction.
+    const t = e.target.closest(".body.note")?.querySelector(":scope > .note-text");
+    if (t?.isContentEditable) return (t.scrollLeft += Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY);
+    // Scrolling down steps out one level. A swipe sends a stream of events, so
+    // one step per swipe: stay locked until the transition has ended and the
+    // wheel has gone quiet, so leftover momentum can't stack more steps.
+    clearTimeout(wheelQuiet);
+    wheelQuiet = setTimeout(unlockWheel, 250);
+    if (wheelLock || anim || e.deltaY <= 0 || Math.abs(e.deltaX) > e.deltaY) return;
+    wheelLock = true;
+    goUp();
+  }, { passive: false });
+  let wheelLock = false, wheelQuiet = 0;
+  function unlockWheel() {
+    if (anim) wheelQuiet = setTimeout(unlockWheel, 50);
+    else wheelLock = false;
+  }
 
-  const goUp = () => focus && enter(state.boxes[focus].parent || "");
-  $("#zoomOut").onclick = goUp;
+  function goUp() {
+    if (focus && !anim) enter(state.boxes[focus].parent || "");
+  }
+
+  // Clicking the page around the canvas (not the crumbs or status) steps out
+  // too. Both press and release must land there, so a drag let go out here
+  // doesn't count.
+  const isOutside = (t) => t === document.body || t.matches?.(".top, .crumbs, .status");
+  let outsideDown = false;
+  document.addEventListener("pointerdown", (e) => (outsideDown = e.button === 0 && isOutside(e.target)));
+  document.addEventListener("click", (e) => {
+    if (outsideDown && isOutside(e.target)) goUp();
+    outsideDown = false;
+  });
 
   function newBoxInView() {
     const inner = innerOf(focus);
@@ -628,7 +867,12 @@
   // ---------- keyboard ----------
 
   window.addEventListener("keydown", (e) => {
-    if (document.activeElement?.isContentEditable) return;
+    if (!colorModal.hidden) {
+      if (e.key === "Escape") closeColor();
+      return;
+    }
+    if (menuFor && e.key === "Escape") return closeMenu();
+    if (document.activeElement?.isContentEditable || e.target.closest?.("textarea, input")) return;
     const mod = e.metaKey || e.ctrlKey;
     if (mod && e.key.toLowerCase() === "z") {
       e.preventDefault();
@@ -642,10 +886,181 @@
     } else if (e.key === "Escape") {
       if (selected) select(null);
       else goUp();
+    } else if (!mod && e.key.toLowerCase() === "t" && focus) {
+      e.preventDefault();
+      toggleNotes();
     } else if (!mod && e.key.toLowerCase() === "n") {
       e.preventDefault();
       if (selected) addChild(selected);
       else newBoxInView();
+    }
+  });
+
+  // ---------- box menu ----------
+
+  // One menu for a box, opened from its menu button or by right-clicking it.
+  const menu = $("#menu");
+  let menuFor = null;                      // { id, x, y, alignRight }
+  let menuClosed = { id: null, at: 0 };
+
+  function openMenu(id, x, y, alignRight = false) {
+    menuFor = { id, x, y, alignRight };
+    renderMenu();
+    menu.hidden = false;
+    placeMenu();
+    boxEl(id)?.classList.add("menu-open");
+  }
+
+  function placeMenu() {
+    const { x, y, alignRight } = menuFor;
+    const r = menu.getBoundingClientRect();
+    const left = alignRight ? x - r.width : x;
+    menu.style.left = clamp(left, 8, innerWidth - r.width - 8) + "px";
+    menu.style.top = (y + r.height + 8 > innerHeight ? Math.max(8, y - r.height) : y) + "px";
+  }
+
+  function closeMenu() {
+    if (!menuFor) return;
+    menuClosed = { id: menuFor.id, at: performance.now() };
+    boxEl(menuFor.id)?.classList.remove("menu-open");
+    menuFor = null;
+    menu.hidden = true;
+  }
+
+  function renderMenu() {
+    const b = state.boxes[menuFor.id];
+    if (!b) return closeMenu();
+    const item = (m, icon, label, cls = "") =>
+      `<button class="mi ${cls}" data-m="${m}" role="menuitem"><span class="mi-icon">${icon}</span><span class="mi-label">${label}</span></button>`;
+    const toggle = (m, label, on) =>
+      `<button class="mi toggle${on ? " on" : ""}" data-m="${m}" role="menuitemcheckbox" aria-checked="${on}">` +
+      `<span class="mi-icon"><span class="tick">${ICON.check}</span></span><span class="mi-label">${label}</span></button>`;
+    menu.innerHTML = [
+      item("open", ICON.open, "Open"),
+      b.showText ? "" : item("add", ICON.add, "Add box inside"),
+      '<div class="mi-sep"></div>',
+      toggle("actionable", "Actionable", isActionable(b)),
+      // Without a title bar there's no checkbox to click, so offer it here.
+      isActionable(b) && !hasTitle(b) ? toggle("done", "Done", !!b.done) : "",
+      toggle("title", "Title", hasTitle(b)),
+      toggle("text", "Show text", !!b.showText),
+      '<div class="mi-sep"></div>',
+      item("color", `<span class="mi-swatch c${b.color}"></span>`, "Edit color…"),
+      '<div class="mi-sep"></div>',
+      item("del", ICON.del, "Delete", "danger"),
+    ].join("");
+    boxEl(b.id)?.classList.add("menu-open");
+  }
+
+  menu.addEventListener("click", (e) => {
+    const it = e.target.closest("[data-m]");
+    if (!it || !menuFor) return;
+    const id = menuFor.id, b = state.boxes[id], m = it.dataset.m;
+    if (m === "open" || m === "add" || m === "color" || m === "del") {
+      closeMenu();
+      if (m === "open") enter(id);
+      else if (m === "add") addChild(id);
+      else if (m === "color") openColor(id);
+      else remove(id);
+      return;
+    }
+    // Toggles keep the menu open so several can be flipped in a row.
+    snapshot();
+    if (m === "actionable") b.actionable = !isActionable(b);
+    else if (m === "done") b.done = !b.done;
+    else if (m === "title") b.showTitle = !hasTitle(b);
+    else if (m === "text") b.showText = !b.showText;
+    render();
+    placeMenu();
+    save();
+  });
+
+  menu.addEventListener("contextmenu", (e) => e.preventDefault());
+
+  window.addEventListener("pointerdown", (e) => {
+    if (menuFor && !menu.contains(e.target)) closeMenu();
+  }, true);
+  window.addEventListener("resize", closeMenu);
+  window.addEventListener("blur", closeMenu);
+
+  // ---------- color popup ----------
+
+  const colorModal = $("#colorModal");
+  let colorFor = null;
+
+  function openColor(id) {
+    const b = state.boxes[id];
+    if (!b) return;
+    colorFor = id;
+    $("#colorName").textContent = b.title || "Untitled";
+    $("#swatches").innerHTML = Array.from({ length: COLORS }, (_, i) =>
+      `<button class="swatch c${i}${i === b.color ? " on" : ""}" data-c="${i}" title="Color ${i + 1}">` +
+      `<span class="swatch-well"></span><span class="swatch-tick">${ICON.check}</span></button>`).join("");
+    colorModal.hidden = false;
+    colorModal.offsetWidth;
+    colorModal.classList.add("show");
+    $("#swatches .on")?.focus();
+  }
+
+  function closeColor() {
+    colorFor = null;
+    colorModal.classList.remove("show");
+    setTimeout(() => { if (!colorFor) colorModal.hidden = true; }, 180);
+  }
+
+  colorModal.addEventListener("click", (e) => {
+    if (e.target === colorModal) return closeColor();
+    const sw = e.target.closest(".swatch");
+    const b = sw && state.boxes[colorFor];
+    if (!b) return;
+    const c = +sw.dataset.c;
+    if (c !== b.color) {
+      snapshot();
+      b.color = c;
+      render();
+      save();
+    }
+    closeColor();
+  });
+
+  // ---------- a box's text ----------
+
+  // Every box carries a text; the opened box's text is edited in this panel.
+  const notes = $("#notes"), notesText = $("#notesText");
+  let notesOpen = false;
+  let notesSnapped = false;   // one undo step per editing session
+
+  function renderNotes() {
+    const show = !!focus && notesOpen;
+    notes.hidden = !show;
+    $("#textBtn").classList.toggle("on", show);
+    if (show && document.activeElement !== notesText) notesText.value = state.boxes[focus].text || "";
+  }
+
+  function toggleNotes() {
+    notesOpen = !notesOpen;
+    renderNotes();
+    if (notesOpen) notesText.focus();
+  }
+
+  $("#textBtn").onclick = toggleNotes;
+  $("#notesClose").onclick = toggleNotes;
+
+  notesText.addEventListener("input", () => {
+    const b = state.boxes[focus];
+    if (!b) return;
+    if (!notesSnapped) {
+      snapshot();
+      notesSnapped = true;
+    }
+    b.text = notesText.value;
+    save();
+  });
+  notesText.addEventListener("blur", () => (notesSnapped = false));
+  notesText.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      notesText.blur();
     }
   });
 
@@ -687,6 +1102,11 @@
     add({ id: "tip4", parent: "welcome", x: 320, y: 170, w: 280, h: 270, title: "Click a box to open it", color: 1 });
     add({ id: "tip5", parent: "tip4", x: 20, y: 20, w: 240, h: 110, title: "Small boxes show less", color: 2 });
     add({ id: "today", parent: null, x: 720, y: 40, w: 340, h: 240, title: "Today", color: 1 });
+    add({
+      id: "note", parent: null, x: 720, y: 320, w: 340, h: 180, title: "Notes", color: 3,
+      actionable: false, showTitle: false, showText: true,
+      text: "Every box holds a text as well as boxes.\n\nRight-click a box (or use its ··· button) to show its text instead of its children, hide its title, or change its color.\n\nClick a text box to edit it; open any other box and press Text to write in it.",
+    });
     return s;
   }
 
