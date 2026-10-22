@@ -183,7 +183,7 @@
     const check = isActionable(b) ? `<button class="check" data-act="check" title="Mark done">${ICON.check}</button>` : "";
 
     el.innerHTML = `
-      ${titled ? `<div class="head">${check}<div class="title" spellcheck="false"></div>${count}${menu}</div>` : menu}
+      ${titled ? `<div class="head">${check}<div class="title" spellcheck="false"></div>${count}${menu}</div>` : check + menu}
       <div class="body${asText ? " note" : ""}">${asText || children.length ? "" : '<div class="hint">Click to open</div>'}</div>
       ${RESIZE_HANDLES}`;
     if (titled) el.querySelector(":scope > .head > .title").textContent = b.title;
@@ -940,8 +940,6 @@
       b.showText ? "" : item("add", ICON.add, "Add box inside"),
       '<div class="mi-sep"></div>',
       toggle("actionable", "Actionable", isActionable(b)),
-      // Without a title bar there's no checkbox to click, so offer it here.
-      isActionable(b) && !hasTitle(b) ? toggle("done", "Done", !!b.done) : "",
       toggle("title", "Title", hasTitle(b)),
       toggle("text", "Show text", !!b.showText),
       '<div class="mi-sep"></div>',

@@ -221,11 +221,12 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   border-radius: 6px;
   border: 1.5px solid color-mix(in srgb, var(--ink) 38%, transparent);
   color: transparent;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  transition: opacity 0.25s, background 0.15s, border-color 0.15s, color 0.15s;
 }
 .check svg { width: 13px; height: 13px; stroke-width: 2.4; }
 .check:hover { color: color-mix(in srgb, var(--ink) 35%, transparent); }
-.box.done > .head > .check { background: var(--ink); border-color: var(--ink); color: var(--c); }
+.box.done > .head > .check,
+.box.done > .check { background: var(--ink); border-color: var(--ink); color: var(--c); }
 
 .title {
   flex: 1;
@@ -288,10 +289,21 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   -webkit-backdrop-filter: blur(6px);
   box-shadow: 0 0 0 1px var(--line);
 }
+/* …and the checkbox over the opposite corner, always shown. */
+.box.no-title > .check {
+  position: absolute;
+  top: 15px;
+  left: 15px;
+  z-index: 1;
+  background: color-mix(in srgb, var(--c) 82%, transparent);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
 .box.no-title > .menu-btn:hover,
 .box.no-title.menu-open > .menu-btn { background: var(--c); }
 .box.no-title { cursor: grab; }
 .box.no-title > .body { margin-top: 8px; cursor: inherit; }
+.box.no-title:has(> .check) > .body > .note-text { padding-left: 34px; }   /* clear of the checkbox */
 .box.no-title.lifting { cursor: grabbing; }
 
 .body {
@@ -321,6 +333,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   color: var(--ink);
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
+  transition: opacity 0.25s;
 }
 .note-text[contenteditable="true"],
 .note-text[contenteditable="plaintext-only"] {
@@ -411,6 +424,7 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .box.lod-bare { border-radius: 6px; cursor: pointer; }
 .box.lod-bare > .head,
 .box.lod-bare > .menu-btn,
+.box.lod-bare > .check,
 .box.lod-bare > .body { display: none; }
 .box.lod-bare > .resize.se { width: 12px; height: 12px; }
 .box.lod-bare > .resize.n, .box.lod-bare > .resize.s { left: 6px; right: 6px; height: 4px; }
@@ -471,16 +485,24 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .canvas.closing .box.lifted > .head,
 .canvas.opening .box.lifted > .menu-btn,
 .canvas.closing .box.lifted > .menu-btn,
+.canvas.opening .box.lifted > .check,
+.canvas.closing .box.lifted > .check,
+.canvas.opening .box.lifted > .body > .note-text,
+.canvas.closing .box.lifted > .body > .note-text,
 .canvas.opening .world::before,
 .canvas.closing .world::before { opacity: 0; }
 .canvas.closing .world > .box,
 .canvas.closing .world::before { transition: none; }
 .canvas.closing .box.lifted > .head,
-.canvas.closing .box.lifted > .menu-btn { transition: none; }
+.canvas.closing .box.lifted > .menu-btn,
+.canvas.closing .box.lifted > .check,
+.canvas.closing .box.lifted > .body > .note-text { transition: none; }
 .canvas.snap .world::before,
 .canvas.snap .box,
 .canvas.snap .box > .head,
-.canvas.snap .box > .menu-btn { transition: none; }
+.canvas.snap .box > .menu-btn,
+.canvas.snap .box > .check,
+.canvas.snap .box > .body > .note-text { transition: none; }
 .box.lifted { box-shadow: var(--shadow-lift); }
 
 
