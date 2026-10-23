@@ -7,7 +7,8 @@
   const HEAD = 44;          // header height of a box
   const INSET = 8;          // body margin inside a box
   const GAP = 12;           // spacing between stacked boxes
-  const NEW_W = 240, NEW_H = 160;   // size of a new box as it appears on screen
+  const NEW_W = 60;         // width of a new box on screen, before its text widens it
+  const NOTE_FONT = 14;     // font size of a new box's text on screen
   const MIN_PX = 24;        // smallest a box may be resized to on screen
   // Level of detail by on-screen size: full box, title only, or a bare tile.
   const FULL_W = 120, FULL_H = 92;
@@ -37,6 +38,7 @@
   let drag = null;
   let kx = 1, ky = 1;         // screen pixels per unit of the current level's space
   let anim = null;            // running open/close transition
+  let noteEdit = null;        // the text being edited in place: { t, w, snapped }
   const undoStack = [];
 
   // ---------- model helpers ----------
@@ -96,12 +98,13 @@
     snapshot();
     const p = parent && state.boxes[parent];
     const { sx, sy } = scaleOf(parent);
-    const w = Math.round(NEW_W / sx), h = Math.round(NEW_H / sy);
+    // A new box is one line of text at NOTE_FONT; typing grows it from there.
+    const w = Math.round(NEW_W / sx), h = (NOTE_FONT * NOTE_LH + NOTE_PAD * 2 + INSET * 2) / sy;
     const b = {
       id: uid(),
       parent,
       x: Math.round(centered ? x - w / 2 : x),
-      y: Math.round(centered ? y - HEAD / 2 / sy : y),
+      y: Math.round(centered ? y - h / 2 : y),
       w,
       h,
       title: "",
@@ -117,6 +120,10 @@
     selected = b.id;
     render();
     startEdit(b.id);
+    if (noteEdit) {
+      noteEdit.snapped = true;   // creating the box is the undo step
+      growNote(noteEdit.t);      // wide enough for its placeholder
+    }
     save();
     return b;
   }
@@ -235,7 +242,7 @@
   const textLines = (text) => text.split("\n").length;
   function noteLines(t) {
     const text = noteText(t);
-    if (!t.isContentEditable) return text ? textLines(text) : 3;   // empty: room for its placeholder
+    if (!t.isContentEditable) return text ? textLines(text) : 1;   // empty: one line for its placeholder
     const st = t.style, was = [st.lineHeight, st.fontSize, st.bottom, st.height];
     Object.assign(st, { lineHeight: "40px", fontSize: "10px", bottom: "auto", height: "auto" });
     const h = t.offsetHeight - NOTE_PAD * 2;
@@ -250,6 +257,34 @@
     t.style.lineHeight = lineH + "px";
     t.style.fontSize = lineH / NOTE_LH + "px";
     updateNoteBar(t);
+  }
+
+  // The width of the text's longest line, padding included.
+  function noteWidth(t) {
+    const st = t.style, was = [st.right, st.width];
+    Object.assign(st, { right: "auto", width: "max-content" });
+    const w = t.offsetWidth;
+    [st.right, st.width] = was;
+    return w;
+  }
+
+  // Typing grows the box to fit its text instead of shrinking the font: as tall as
+  // its lines at the current line height, and as wide as its longest line, never
+  // narrower than when editing began. Only resizing the box changes the font.
+  const NOTE_END = 28;   // room after the longest line for the fade and the caret
+  function growNote(t) {
+    const el = t.closest(".box"), b = el && state.boxes[el.dataset.id];
+    if (!b || noteEdit?.t !== t) return;
+    if (!noteEdit.snapped) {
+      snapshot();
+      noteEdit.snapped = true;
+    }
+    const lineH = parseFloat(t.style.lineHeight) || NOTE_FONT * NOTE_LH;
+    const { sx, sy } = scaleOf(b.parent);
+    b.w = Math.max(noteEdit.w, (noteWidth(t) + INSET * 2 + NOTE_END) / sx);
+    b.h = (noteLines(t) * lineH + NOTE_PAD * 2 + headOf(b) + INSET) / sy;
+    fitInside(b);
+    layoutChild(el, sx, sy);
   }
 
   // Lines that run off the right are scrolled with an overlay bar, drawn over
@@ -505,6 +540,7 @@
     if (!t || !t.offsetWidth) return;
     try { t.contentEditable = "plaintext-only"; } catch {}
     if (t.contentEditable !== "plaintext-only") t.contentEditable = "true";
+    noteEdit = { t, w: state.boxes[id].w, snapped: false };
     t.focus();
     if (x == null) {
       const r = document.createRange();
@@ -526,7 +562,7 @@
 
   canvas.addEventListener("input", (e) => {
     const t = e.target;
-    if (t.classList?.contains("note-text")) fitNote(t);
+    if (t.classList?.contains("note-text")) growNote(t);
   });
   canvas.addEventListener("keyup", (e) => {
     if (e.target.classList?.contains("note-text")) updateNoteBar(e.target);
@@ -560,12 +596,17 @@
     const b = state.boxes[t.closest(".box").dataset.id];
     const text = noteText(t).trim() ? noteText(t) : "";
     setNoteText(t, text);
-    if (b && (b.text || "") !== text) {
-      snapshot();
+    const typed = noteEdit?.t === t && noteEdit.snapped;
+    // Trimming may have dropped lines, so fit the box to what's kept.
+    if (typed) growNote(t);
+    else fitNote(t);
+    if (noteEdit?.t === t) noteEdit = null;
+    const changed = b && (b.text || "") !== text;
+    if (changed) {
+      if (!typed) snapshot();
       b.text = text;
-      save();
     }
-    fitNote(t);
+    if (typed || changed) save();
   }
 
   canvas.addEventListener("focusout", (e) => {
@@ -860,7 +901,7 @@
   function newBoxInView() {
     const inner = innerOf(focus);
     const jitter = (k) => (Math.random() - 0.5) * 60 / k;
-    createBox(focus, inner.w / 2 + jitter(kx), inner.h / 2 - NEW_H / 2 / ky + jitter(ky), true);
+    createBox(focus, inner.w / 2 + jitter(kx), inner.h / 2 + jitter(ky), true);
   }
   $("#newBox").onclick = newBoxInView;
 
