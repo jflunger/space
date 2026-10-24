@@ -10,12 +10,11 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <header class="top">
-    <div class="crumbs" id="crumbs">
-      <h1><button data-id="">Space</button></h1>
-    </div>
+  <aside class="side">
+    <h1 class="side-title" id="spaceTitle">Space</h1>
+    <textarea id="notesText" placeholder="Write something…" aria-labelledby="spaceTitle"></textarea>
     <div class="status" id="status"></div>
-  </header>
+  </aside>
 
   <main class="canvas" id="canvas">
     <div class="world" id="world"></div>
@@ -28,22 +27,7 @@
         <svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg>
         <span>New box</span>
       </button>
-      <span class="tb-sep" id="textSep" hidden></span>
-      <button class="tb-btn" id="textBtn" title="This box's text (T)" hidden>
-        <svg viewBox="0 0 16 16"><path d="M3 4h10M3 7h10M3 10h7M3 13h5"/></svg>
-        <span>Text</span>
-      </button>
     </div>
-    <aside class="notes" id="notes" hidden>
-      <div class="notes-head">
-        <span class="notes-title">Text</span>
-        <span class="notes-sub" id="notesSub"></span>
-        <button class="notes-close" id="notesClose" title="Close (T)">
-          <svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>
-        </button>
-      </div>
-      <textarea id="notesText" placeholder="Write something…"></textarea>
-    </aside>
   </main>
 
   <div class="menu" id="menu" role="menu" hidden></div>

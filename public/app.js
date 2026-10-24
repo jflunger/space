@@ -356,29 +356,15 @@
     $("#empty .empty-sub").textContent = focus
       ? "Double-click anywhere to add a box inside"
       : "Double-click anywhere to drop a box";
-    $("#textSep").hidden = $("#textBtn").hidden = !focus;
-    renderCrumbs();
+    renderTitle();
     renderNotes();
     if (menuFor) renderMenu();
   }
 
-  function renderCrumbs() {
-    const path = [];
-    for (let id = focus; id && state.boxes[id]; id = state.boxes[id].parent) path.unshift(state.boxes[id]);
-    const crumbs = $("#crumbs");
-    crumbs.replaceChildren(crumbs.firstElementChild);
-    for (const b of path) {
-      const sep = document.createElement("span");
-      sep.className = "sep";
-      sep.textContent = "/";
-      const btn = document.createElement("button");
-      btn.className = "crumb";
-      btn.dataset.id = b.id;
-      btn.textContent = b.title || "Untitled";
-      crumbs.append(sep, btn);
-    }
-    document.title = path.length ? `${path.at(-1).title || "Untitled"} · Space` : "Space";
-    if (focus) $("#notesSub").textContent = state.boxes[focus].title || "Untitled";
+  function renderTitle() {
+    const name = focus ? state.boxes[focus].title || "Untitled" : "Space";
+    $("#spaceTitle").textContent = name;
+    document.title = focus ? `${name} · Space` : "Space";
   }
 
   function select(id) {
@@ -476,8 +462,6 @@
     closeMenu();
     selected = null;
     document.activeElement?.blur?.();
-    // A box shown as text is mostly its text, so open straight onto it.
-    if (next && next !== prev && state.boxes[next].showText) notesOpen = true;
 
     const el = next && next !== prev && isInside(next, prev) && boxEl(next);
     if (el && el.offsetWidth) {
@@ -510,11 +494,6 @@
   }
 
   window.addEventListener("hashchange", syncFromHash);
-
-  $("#crumbs").addEventListener("click", (e) => {
-    const btn = e.target.closest("button[data-id]");
-    if (btn) enter(btn.dataset.id);
-  });
 
   // ---------- title editing ----------
 
@@ -648,18 +627,15 @@
     return { x: (clientX - r.left) / kx, y: (clientY - r.top) / ky };
   }
 
-  // What would receive a drop at this point: a box, a breadcrumb, or the current level.
-  // Breadcrumbs are hit by the pointer; boxes by the dragged box's center.
-  // `r` is where the pointer alone would put the box (world coordinates), so the
-  // target follows the pointer even while the shown box is held inside a parent.
-  function dropTargetAt(r, px, py) {
-    const atPointer = document.elementFromPoint(px, py);
-    const crumb = atPointer?.closest("#crumbs button[data-id]");
-    if (crumb) return { el: crumb, id: crumb.dataset.id || null, crumb: true };
+  // What would receive a drop at this point: a box or the current level, hit by
+  // the dragged box's center. `r` is where the pointer alone would put the box
+  // (world coordinates), so the target follows the pointer even while the shown
+  // box is held inside a parent.
+  function dropTargetAt(r) {
     const w = world.getBoundingClientRect();
     const hit = document.elementFromPoint(w.left + r.x + r.w / 2, w.top + r.y + r.h / 2);
     // A box shown as text doesn't show its children, so nothing can be dropped into it.
-    const box = hit && canvas.contains(hit) && !hit.closest(".toolbar, .notes") && hit.closest(".box.lod-full:not(.show-text)");
+    const box = hit && canvas.contains(hit) && !hit.closest(".toolbar") && hit.closest(".box.lod-full:not(.show-text)");
     if (box) return { el: box, id: box.dataset.id };
     // Anywhere else (the bare level, the toolbar, past the canvas edge, out of the
     // window) holds the box in the current level.
@@ -685,23 +661,14 @@
   function drop(d) {
     const { b, target } = d;
     d.target?.el?.classList.remove("drop-target");
-    if (target.crumb && target.id !== focus) {
-      const from = innerOf(b.parent);
-      b.parent = target.id;
-      const to = innerOf(b.parent);
-      b.w = (b.w / from.w) * to.w;
-      b.h = (b.h / from.h) * to.h;
-      ({ x: b.x, y: b.y } = nextSlot(b.parent));
-    } else {
-      const r = d.el.getBoundingClientRect();
-      const c = containerOf(target.id).getBoundingClientRect();
-      b.parent = target.id;
-      const { sx, sy } = scaleOf(b.parent);
-      b.x = (r.left - c.left) / sx;
-      b.y = (r.top - c.top) / sy;
-      b.w = r.width / sx;
-      b.h = r.height / sy;
-    }
+    const r = d.el.getBoundingClientRect();
+    const c = containerOf(target.id).getBoundingClientRect();
+    b.parent = target.id;
+    const { sx, sy } = scaleOf(b.parent);
+    b.x = (r.left - c.left) / sx;
+    b.y = (r.top - c.top) / sy;
+    b.w = r.width / sx;
+    b.h = r.height / sy;
     b.x = Math.round(b.x);
     b.y = Math.round(b.y);
     b.w = Math.round(b.w);
@@ -716,7 +683,7 @@
   canvas.addEventListener("pointerdown", (e) => {
     if (e.button !== 0 || anim) return;
     const t = e.target;
-    if (t.isContentEditable || t.closest(".toolbar, .notes")) return;
+    if (t.isContentEditable || t.closest(".toolbar")) return;
     const el = t.closest(".box");
 
     if (!el) {
@@ -767,10 +734,10 @@
     const { b } = drag;
     if (drag.mode === "move") {
       const raw = { ...drag.from, x: drag.from.x + rdx, y: drag.from.y + rdy };
-      const target = dropTargetAt(raw, e.clientX, e.clientY);
+      const target = dropTargetAt(raw);
       highlight(drag, target);
       // Show the box where it will land: held inside the parent it would drop into.
-      const r = target && !target.crumb ? confineTo(raw, target.id) : raw;
+      const r = confineTo(raw, target.id);
       setRect(drag.el, r);
       layoutBox(drag.el, b, r.w, r.h);
     } else if (drag.mode === "resize") {
@@ -863,19 +830,28 @@
   });
 
   canvas.addEventListener("wheel", (e) => {
-    if (e.target.closest(".notes")) return;
     e.preventDefault();
     // An edited text scrolls sideways with either wheel direction.
     const t = e.target.closest(".body.note")?.querySelector(":scope > .note-text");
     if (t?.isContentEditable) return (t.scrollLeft += Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY);
-    // Scrolling down steps out one level. A swipe sends a stream of events, so
-    // one step per swipe: stay locked until the transition has ended and the
-    // wheel has gone quiet, so leftover momentum can't stack more steps.
+    // Scrolling down steps out one level; scrolling up steps into the box under
+    // the pointer. A swipe sends a stream of events, so one step per swipe: stay
+    // locked until the transition has ended and the wheel has gone quiet, so
+    // leftover momentum can't stack more steps.
     clearTimeout(wheelQuiet);
     wheelQuiet = setTimeout(unlockWheel, 250);
-    if (wheelLock || anim || e.deltaY <= 0 || Math.abs(e.deltaX) > e.deltaY) return;
+    if (wheelLock || anim || !e.deltaY || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    if (e.deltaY > 0) {
+      wheelLock = true;
+      return goUp();
+    }
+    // Into the box at this level that holds the pointer, even when it's over one
+    // of that box's own children.
+    let el = e.target.closest(".box");
+    while (el && state.boxes[el.dataset.id]?.parent !== focus) el = el.parentElement?.closest(".box");
+    if (!el) return;
     wheelLock = true;
-    goUp();
+    enter(el.dataset.id);
   }, { passive: false });
   let wheelLock = false, wheelQuiet = 0;
   function unlockWheel() {
@@ -887,10 +863,9 @@
     if (focus && !anim) enter(state.boxes[focus].parent || "");
   }
 
-  // Clicking the page around the canvas (not the crumbs or status) steps out
-  // too. Both press and release must land there, so a drag let go out here
-  // doesn't count.
-  const isOutside = (t) => t === document.body || t.matches?.(".top, .crumbs, .status");
+  // Clicking the page around the canvas steps out too. Both press and release
+  // must land there, so a drag let go out here doesn't count.
+  const isOutside = (t) => t === document.body;
   let outsideDown = false;
   document.addEventListener("pointerdown", (e) => (outsideDown = e.button === 0 && isOutside(e.target)));
   document.addEventListener("click", (e) => {
@@ -927,9 +902,6 @@
     } else if (e.key === "Escape") {
       if (selected) select(null);
       else goUp();
-    } else if (!mod && e.key.toLowerCase() === "t" && focus) {
-      e.preventDefault();
-      toggleNotes();
     } else if (!mod && e.key.toLowerCase() === "n") {
       e.preventDefault();
       if (selected) addChild(selected);
@@ -1064,29 +1036,18 @@
 
   // ---------- a box's text ----------
 
-  // Every box carries a text; the opened box's text is edited in this panel.
-  const notes = $("#notes"), notesText = $("#notesText");
-  let notesOpen = false;
+  // Every box carries a text, and so does the top level; the current one is
+  // edited in the side panel.
+  const notesText = $("#notesText");
   let notesSnapped = false;   // one undo step per editing session
+  const textOwner = () => (focus ? state.boxes[focus] : state);
 
   function renderNotes() {
-    const show = !!focus && notesOpen;
-    notes.hidden = !show;
-    $("#textBtn").classList.toggle("on", show);
-    if (show && document.activeElement !== notesText) notesText.value = state.boxes[focus].text || "";
+    if (document.activeElement !== notesText) notesText.value = textOwner()?.text || "";
   }
-
-  function toggleNotes() {
-    notesOpen = !notesOpen;
-    renderNotes();
-    if (notesOpen) notesText.focus();
-  }
-
-  $("#textBtn").onclick = toggleNotes;
-  $("#notesClose").onclick = toggleNotes;
 
   notesText.addEventListener("input", () => {
-    const b = state.boxes[focus];
+    const b = textOwner();
     if (!b) return;
     if (!notesSnapped) {
       snapshot();
@@ -1144,7 +1105,7 @@
     add({
       id: "note", parent: null, x: 720, y: 320, w: 340, h: 180, title: "Notes", color: 3,
       actionable: false, showTitle: false, showText: true,
-      text: "Every box holds a text as well as boxes.\n\nRight-click a box (or use its ··· button) to show its text instead of its children, hide its title, or change its color.\n\nClick a text box to edit it; open any other box and press Text to write in it.",
+      text: "Every box holds a text as well as boxes.\n\nRight-click a box (or use its ··· button) to show its text instead of its children, hide its title, or change its color.\n\nClick a text box to edit it; open any other box to write its text in the panel on the left.",
     });
     return s;
   }
