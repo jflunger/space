@@ -18,7 +18,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 def main():
     port = int(os.environ["PORT"])
-    server = ThreadingHTTPServer(("0.0.0.0", port), Handler)
+    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     print(f"space listening on :{port}", flush=True)
     try:
         server.serve_forever()
