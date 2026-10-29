@@ -97,6 +97,9 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
   overflow-wrap: anywhere;
 }
 
+.side-title.editable { outline: none; cursor: text; }
+.side-title.editable:empty::before { content: "Untitled"; color: var(--muted); }
+
 .side textarea {
   flex: 1;
   min-height: 0;
@@ -382,21 +385,6 @@ svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width:
 .box.show-text:has(.note-text:focus) { box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
 .box.show-text > .body.note { cursor: text; }
 .note-text:empty::before { content: "No text yet"; color: color-mix(in srgb, var(--ink) 38%, transparent); }
-
-.hint {
-  position: absolute;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  font-size: 12px;
-  color: color-mix(in srgb, var(--ink) 40%, transparent);
-  pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.2s;
-  text-align: center;
-  padding: 8px;
-}
-.box:hover > .body > .hint { opacity: 1; }
 
 .resize { position: absolute; z-index: 2; }
 .resize.n, .resize.s { left: 8px; right: 8px; height: 6px; cursor: ns-resize; }

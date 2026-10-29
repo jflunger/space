@@ -39,6 +39,7 @@
   let kx = 1, ky = 1;         // screen pixels per unit of the current level's space
   let anim = null;            // running open/close transition
   let noteEdit = null;        // the text being edited in place: { t, w, snapped }
+  let titling = null;         // a box given an empty title bar to type its first title into
   const undoStack = [];
 
   // ---------- model helpers ----------
@@ -50,8 +51,12 @@
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   // Display options; boxes saved before they existed keep the old look.
   const isActionable = (b) => b.actionable !== false;
-  const hasTitle = (b) => b.showTitle !== false;
+  // A box shows a title bar exactly when it has a title, or while one is being typed.
+  const hasTitle = (b) => !!b.title || b.id === titling;
   const headOf = (b) => (hasTitle(b) ? HEAD : INSET);   // space above a box's body
+  // A box shows its text unless it holds boxes; one holding both shows its boxes
+  // unless set to prefer its text.
+  const showsText = (b) => !kids(b.id).length || (!!b.text && !!b.preferText);
 
   function snapshot() {
     undoStack.push(JSON.stringify(state));
@@ -109,8 +114,6 @@
       h,
       title: "",
       text: "",
-      showTitle: false,
-      showText: true,
       done: false,
       color: p ? (p.color + 1) % COLORS : state.seq++ % COLORS,
       z: maxZ() + 1,
@@ -174,9 +177,9 @@
 
   function buildBox(b) {
     const el = document.createElement("div");
-    const titled = hasTitle(b), asText = !!b.showText;
+    const titled = hasTitle(b), asText = showsText(b);
     el.className = `box c${b.color}${isActionable(b) && b.done ? " done" : ""}${titled ? "" : " no-title"}` +
-      `${asText ? " show-text" : ""}${b.id === selected ? " selected" : ""}`;
+      `${asText ? " show-text" : ""}${asText && b.text ? " has-text" : ""}${b.id === selected ? " selected" : ""}`;
     el.dataset.id = b.id;
     el.style.zIndex = b.z || 0;
 
@@ -191,7 +194,7 @@
 
     el.innerHTML = `
       ${titled ? `<div class="head">${check}<div class="title" spellcheck="false"></div>${count}${menu}</div>` : check + menu}
-      <div class="body${asText ? " note" : ""}">${asText || children.length ? "" : '<div class="hint">Click to open</div>'}</div>
+      <div class="body${asText ? " note" : ""}"></div>
       ${RESIZE_HANDLES}`;
     if (titled) el.querySelector(":scope > .head > .title").textContent = b.title;
     const body = el.querySelector(":scope > .body");
@@ -317,7 +320,7 @@
       el.dataset.lod = lod;
     }
     if (lod !== "full") return;
-    if (b.showText) return fitNote(el.querySelector(":scope > .body > .note-text"));
+    if (showsText(b)) return fitNote(el.querySelector(":scope > .body > .note-text"));
     const sx = (w - INSET * 2) / b.w, sy = (h - headOf(b) - INSET) / b.h;
     for (const c of el.querySelectorAll(":scope > .body > .box")) layoutChild(c, sx, sy);
   }
@@ -361,11 +364,45 @@
     if (menuFor) renderMenu();
   }
 
+  // The side panel's headline names the open box and edits its title; the top
+  // level is just "Space" and can't be renamed. A box whose title is hidden reads
+  // as untitled, and naming it here shows its title, clearing it hides it.
+  const spaceTitle = $("#spaceTitle");
+  let titleFor = null;   // the box whose title the headline is editing
+  const shownTitle = (b) => b?.title || "";
+
   function renderTitle() {
-    const name = focus ? state.boxes[focus].title || "Untitled" : "Space";
-    $("#spaceTitle").textContent = name;
+    const name = focus ? shownTitle(state.boxes[focus]) || "Untitled" : "Space";
     document.title = focus ? `${name} · Space` : "Space";
+    if (document.activeElement === spaceTitle) return;
+    spaceTitle.textContent = focus ? shownTitle(state.boxes[focus]) : "Space";
+    spaceTitle.classList.toggle("editable", !!focus);
+    if (!focus) spaceTitle.contentEditable = "false";
+    else {
+      try { spaceTitle.contentEditable = "plaintext-only"; } catch {}
+      if (spaceTitle.contentEditable !== "plaintext-only") spaceTitle.contentEditable = "true";
+    }
   }
+
+  spaceTitle.addEventListener("focus", () => (titleFor = focus));
+  spaceTitle.addEventListener("blur", () => {
+    const b = state.boxes[titleFor];
+    titleFor = null;
+    const title = spaceTitle.textContent.replace(/\s+/g, " ").trim();
+    if (b && shownTitle(b) !== title) {
+      snapshot();
+      b.title = title;
+      save();
+    }
+    render();
+  });
+  spaceTitle.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") spaceTitle.textContent = shownTitle(state.boxes[titleFor]);
+    if (e.key === "Enter" || e.key === "Escape") {
+      e.preventDefault();
+      spaceTitle.blur();
+    }
+  });
 
   function select(id) {
     selected = id;
@@ -498,9 +535,12 @@
   // ---------- title editing ----------
 
   function startEdit(id) {
-    if (!hasTitle(state.boxes[id])) return state.boxes[id].showText && startNoteEdit(id);
+    if (!hasTitle(state.boxes[id])) return showsText(state.boxes[id]) && startNoteEdit(id);
     const t = boxEl(id)?.querySelector(":scope > .head > .title");
-    if (!t || !t.offsetWidth) return;
+    if (!t || !t.offsetWidth) {
+      if (titling === id) (titling = null), render();
+      return;
+    }
     t.contentEditable = "true";
     t.focus();
     const r = document.createRange();
@@ -584,6 +624,7 @@
     if (changed) {
       if (!typed) snapshot();
       b.text = text;
+      if (!text && kids(b.id).length) render();   // nothing left to show over its boxes
     }
     if (typed || changed) save();
   }
@@ -597,12 +638,15 @@
     const b = state.boxes[t.closest(".box").dataset.id];
     const title = t.textContent.replace(/\s+/g, " ").trim();
     t.textContent = title;
+    const wasTitling = titling;
+    titling = null;
     if (b && b.title !== title) {
-      snapshot();
+      if (wasTitling !== b.id) snapshot();   // the menu took the snapshot for a new title
       b.title = title;
-      renderCrumbs();
       save();
     }
+    if (!title) render();   // an empty title takes its bar with it
+    else renderTitle();
   });
 
   canvas.addEventListener("keydown", (e) => {
@@ -634,8 +678,9 @@
   function dropTargetAt(r) {
     const w = world.getBoundingClientRect();
     const hit = document.elementFromPoint(w.left + r.x + r.w / 2, w.top + r.y + r.h / 2);
-    // A box shown as text doesn't show its children, so nothing can be dropped into it.
-    const box = hit && canvas.contains(hit) && !hit.closest(".toolbar") && hit.closest(".box.lod-full:not(.show-text)");
+    // A box showing its text hides its children, so nothing can be dropped into it;
+    // a box with no text yet takes the drop and shows its boxes from then on.
+    const box = hit && canvas.contains(hit) && !hit.closest(".toolbar") && hit.closest(".box.lod-full:not(.has-text)");
     if (box) return { el: box, id: box.dataset.id };
     // Anywhere else (the bare level, the toolbar, past the canvas edge, out of the
     // window) holds the box in the current level.
@@ -950,11 +995,11 @@
       `<span class="mi-icon"><span class="tick">${ICON.check}</span></span><span class="mi-label">${label}</span></button>`;
     menu.innerHTML = [
       item("open", ICON.open, "Open"),
-      b.showText ? "" : item("add", ICON.add, "Add box inside"),
+      showsText(b) && b.text ? "" : item("add", ICON.add, "Add box inside"),
       '<div class="mi-sep"></div>',
       toggle("actionable", "Actionable", isActionable(b)),
       toggle("title", "Title", hasTitle(b)),
-      toggle("text", "Show text", !!b.showText),
+      b.text && kids(b.id).length ? toggle("text", "Show text", !!b.preferText) : "",
       '<div class="mi-sep"></div>',
       item("color", `<span class="mi-swatch c${b.color}"></span>`, "Edit color…"),
       '<div class="mi-sep"></div>',
@@ -979,8 +1024,17 @@
     snapshot();
     if (m === "actionable") b.actionable = !isActionable(b);
     else if (m === "done") b.done = !b.done;
-    else if (m === "title") b.showTitle = !hasTitle(b);
-    else if (m === "text") b.showText = !b.showText;
+    else if (m === "title") {
+      // Turning the title off clears it; turning it on opens an empty bar to type into.
+      if (b.title) b.title = "";
+      else {
+        closeMenu();
+        titling = id;
+        render();
+        return startEdit(id);
+      }
+    }
+    else if (m === "text") b.preferText = !b.preferText;
     render();
     placeMenu();
     save();
@@ -1103,9 +1157,9 @@
     add({ id: "tip5", parent: "tip4", x: 20, y: 20, w: 240, h: 110, title: "Small boxes show less", color: 2 });
     add({ id: "today", parent: null, x: 720, y: 40, w: 340, h: 240, title: "Today", color: 1 });
     add({
-      id: "note", parent: null, x: 720, y: 320, w: 340, h: 180, title: "Notes", color: 3,
-      actionable: false, showTitle: false, showText: true,
-      text: "Every box holds a text as well as boxes.\n\nRight-click a box (or use its ··· button) to show its text instead of its children, hide its title, or change its color.\n\nClick a text box to edit it; open any other box to write its text in the panel on the left.",
+      id: "note", parent: null, x: 720, y: 320, w: 340, h: 180, color: 3,
+      actionable: false,
+      text: "Every box holds a text as well as boxes.\n\nRight-click a box (or use its ··· button) to add or remove its title, choose text or boxes when it has both, or change its color.\n\nClick a text box to edit it; open any other box to write its text in the panel on the left.",
     });
     return s;
   }
@@ -1121,6 +1175,14 @@
     state.boxes ||= {};
     state.seq ||= 0;
     state.space ||= { ...SPACE };
+    // A title used to be hideable on its own; now a hidden title is no title.
+    for (const b of Object.values(state.boxes)) {
+      if (b.showTitle === false) b.title = "";
+      delete b.showTitle;
+      // Showing text used to be a plain switch; it now only decides for a box with both.
+      if (b.showText) b.preferText = true;
+      delete b.showText;
+    }
     for (const b of Object.values(state.boxes)) fitInside(b);
     syncFromHash();
   }
