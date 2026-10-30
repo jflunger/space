@@ -16,6 +16,8 @@
   const BARE_W = 40, BARE_H = 32;   // a box without a title bar shows its body down to this
   const COLORS = 6;
   const SPACE = { w: 1600, h: 1000 };   // the finite top-level space
+  const BOX_SPACE = { w: 1, h: 1 };     // every box's own space: its children are fractions of it
+  const FORMAT = 2;                     // 1: a box's space was as many units as the box itself
   const OPEN_MS = 420;
 
   const ICON = {
@@ -73,16 +75,18 @@
     save();
   }
 
-  // Every box is its own space, as many units across as the box is in its parent.
-  const innerOf = (pid) => (pid && state.boxes[pid] ? { w: state.boxes[pid].w, h: state.boxes[pid].h } : state.space);
+  // Every box is its own space of the same size, however big it is, so positions
+  // stay just as precise however deep the boxes nest. Nothing is rounded: that
+  // would snap children to a grid that gets coarser the smaller their parent.
+  const innerOf = (pid) => (pid && state.boxes[pid] ? BOX_SPACE : state.space);
 
   // Keep a child fully inside its parent by moving it and, if needed, shrinking it.
   function fitInside(b) {
     const inner = innerOf(b.parent);
-    b.w = Math.max(1, Math.min(b.w, inner.w));
-    b.h = Math.max(1, Math.min(b.h, inner.h));
-    b.x = Math.round(clamp(b.x, 0, inner.w - b.w));
-    b.y = Math.round(clamp(b.y, 0, inner.h - b.h));
+    b.w = clamp(b.w || 0, inner.w * 1e-9, inner.w);
+    b.h = clamp(b.h || 0, inner.h * 1e-9, inner.h);
+    b.x = clamp(b.x || 0, 0, inner.w - b.w);
+    b.y = clamp(b.y || 0, 0, inner.h - b.h);
   }
 
   // The element a level's children are drawn into, and its pixels-per-unit.
@@ -104,12 +108,12 @@
     const p = parent && state.boxes[parent];
     const { sx, sy } = scaleOf(parent);
     // A new box is one line of text at NOTE_FONT; typing grows it from there.
-    const w = Math.round(NEW_W / sx), h = (NOTE_FONT * NOTE_LH + NOTE_PAD * 2 + INSET * 2) / sy;
+    const w = NEW_W / sx, h = (NOTE_FONT * NOTE_LH + NOTE_PAD * 2 + INSET * 2) / sy;
     const b = {
       id: uid(),
       parent,
-      x: Math.round(centered ? x - w / 2 : x),
-      y: Math.round(centered ? y - h / 2 : y),
+      x: centered ? x - w / 2 : x,
+      y: centered ? y - h / 2 : y,
       w,
       h,
       title: "",
@@ -321,7 +325,8 @@
     }
     if (lod !== "full") return;
     if (showsText(b)) return fitNote(el.querySelector(":scope > .body > .note-text"));
-    const sx = (w - INSET * 2) / b.w, sy = (h - headOf(b) - INSET) / b.h;
+    const inner = innerOf(b.id);
+    const sx = (w - INSET * 2) / inner.w, sy = (h - headOf(b) - INSET) / inner.h;
     for (const c of el.querySelectorAll(":scope > .body > .box")) layoutChild(c, sx, sy);
   }
 
@@ -714,10 +719,6 @@
     b.y = (r.top - c.top) / sy;
     b.w = r.width / sx;
     b.h = r.height / sy;
-    b.x = Math.round(b.x);
-    b.y = Math.round(b.y);
-    b.w = Math.round(b.w);
-    b.h = Math.round(b.h);
     const p = state.boxes[b.parent];
     if (p && p.color === b.color) b.color = (p.color + 1) % COLORS;
     fitInside(b);
@@ -747,13 +748,8 @@
     const base = { b, el, sx: e.clientX, sy: e.clientY, scale: scaleOf(b.parent), onNote };
     const handle = t.closest(".resize");
     if (handle) {
-      // Everything inside scales with the box, so remember where it all started.
-      const inside = descendants(b.id).map((id) => {
-        const c = state.boxes[id];
-        return { c, x: c.x, y: c.y, w: c.w, h: c.h };
-      });
-      const dir = handle.dataset.dir;
-      drag = { ...base, mode: "resize", dir, ox: b.x, oy: b.y, ow: b.w, oh: b.h, inside };
+      // Everything inside is placed in fractions of the box, so it scales along.
+      drag = { ...base, mode: "resize", dir: handle.dataset.dir, ox: b.x, oy: b.y, ow: b.w, oh: b.h };
     }
     else if (t.closest(".head") || !el.classList.contains("lod-full") || !hasTitle(b))
       drag = { ...base, mode: "move", onTitle: !!t.closest(".title") };
@@ -791,24 +787,15 @@
       const { dir, ox, oy, ow, oh } = drag;
       const minW = MIN_PX / sx, minH = MIN_PX / sy;
       // Corners move two edges, sides just the one; the opposite edge stays put.
-      if (dir.includes("e")) b.w = Math.round(clamp(ow + rdx / sx, minW, inner.w - ox));
+      if (dir.includes("e")) b.w = clamp(ow + rdx / sx, minW, inner.w - ox);
       if (dir.includes("w")) {
-        b.x = Math.round(clamp(ox + rdx / sx, 0, ox + ow - minW));
+        b.x = clamp(ox + rdx / sx, 0, ox + ow - minW);
         b.w = ox + ow - b.x;
       }
-      if (dir.includes("s")) b.h = Math.round(clamp(oh + rdy / sy, minH, inner.h - oy));
+      if (dir.includes("s")) b.h = clamp(oh + rdy / sy, minH, inner.h - oy);
       if (dir.includes("n")) {
-        b.y = Math.round(clamp(oy + rdy / sy, 0, oy + oh - minH));
+        b.y = clamp(oy + rdy / sy, 0, oy + oh - minH);
         b.h = oy + oh - b.y;
-      }
-      // Each box's space is as many units as the box is big, so every level below
-      // stretches by the same factor to stay put relative to its parent.
-      const fx = b.w / drag.ow, fy = b.h / drag.oh;
-      for (const o of drag.inside) {
-        o.c.x = o.x * fx;
-        o.c.y = o.y * fy;
-        o.c.w = o.w * fx;
-        o.c.h = o.h * fy;
       }
       layoutChild(drag.el, sx, sy);
     }
@@ -1147,7 +1134,8 @@
   });
 
   function seed() {
-    const s = { boxes: {}, seq: 2, space: { ...SPACE } };
+    // Laid out in format 1's units, which read easier; load converts them.
+    const s = { boxes: {}, seq: 2, space: { ...SPACE }, format: 1 };
     const add = (b) => (s.boxes[b.id] = { done: false, z: Object.keys(s.boxes).length + 1, ...b });
     add({ id: "welcome", parent: null, x: 40, y: 40, w: 620, h: 460, title: "Welcome to Space", color: 0 });
     add({ id: "tip1", parent: "welcome", x: 16, y: 16, w: 280, h: 130, title: "Double-click to add", color: 1 });
@@ -1164,6 +1152,25 @@
     return s;
   }
 
+  // Format 1 gave each box a space as many units as the box itself, so a child's
+  // numbers shrank with every level. Re-express each child as a fraction of its
+  // parent, reading every parent's size before any of them is converted.
+  function migrate() {
+    if ((state.format || 1) >= FORMAT) return;
+    const size = {};
+    for (const b of Object.values(state.boxes)) size[b.id] = { w: b.w || 1, h: b.h || 1 };
+    for (const b of Object.values(state.boxes)) {
+      const p = size[b.parent];
+      if (!p) continue;
+      b.x /= p.w;
+      b.y /= p.h;
+      b.w /= p.w;
+      b.h /= p.h;
+    }
+    state.format = FORMAT;
+    save();
+  }
+
   function load() {
     try {
       // "space-backup" is the old server-era backup key; adopt it once if present.
@@ -1175,6 +1182,7 @@
     state.boxes ||= {};
     state.seq ||= 0;
     state.space ||= { ...SPACE };
+    migrate();
     // A title used to be hideable on its own; now a hidden title is no title.
     for (const b of Object.values(state.boxes)) {
       if (b.showTitle === false) b.title = "";
